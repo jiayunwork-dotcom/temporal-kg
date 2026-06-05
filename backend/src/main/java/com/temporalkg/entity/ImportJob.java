@@ -42,8 +42,11 @@ public class ImportJob {
     @Builder.Default
     private Integer duplicatesSkipped = 0;
 
-    @Column(name = "error_details", columnDefinition = "jsonb")
+    @Column(name = "error_details", columnDefinition = "TEXT")
     private String errorDetails;
+
+    @Column(name = "error_message")
+    private String errorMessage;
 
     @Column(name = "created_at")
     @Builder.Default

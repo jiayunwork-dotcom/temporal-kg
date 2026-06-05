@@ -5,7 +5,7 @@ RUN mvn dependency:go-offline -B
 COPY src ./src
 RUN mvn package -DskipTests -B
 
-FROM eclipse-temurin:17-jre-alpine
+FROM maven:3.9-eclipse-temurin-17
 WORKDIR /app
 COPY --from=build /app/target/temporal-kg-backend-1.0.0.jar app.jar
 EXPOSE 8080

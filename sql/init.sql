@@ -135,7 +135,8 @@ CREATE TABLE import_jobs (
     processed_records INT DEFAULT 0,
     failed_records INT DEFAULT 0,
     duplicates_skipped INT DEFAULT 0,
-    error_details JSONB DEFAULT '[]',
+    error_details TEXT DEFAULT '[]',
+    error_message TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     completed_at TIMESTAMP WITH TIME ZONE
 );

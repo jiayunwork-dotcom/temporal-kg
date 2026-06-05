@@ -55,4 +55,7 @@ public interface TripleRepository extends JpaRepository<Triple, Long> {
 
     @Query("SELECT COUNT(t) FROM Triple t")
     long countTotal();
+
+    @Query("SELECT COUNT(t) FROM Triple t WHERE t.subjectId = :entityId OR t.objectId = :entityId")
+    int countDegree(@Param("entityId") Long entityId);
 }
