@@ -67,4 +67,17 @@ public interface TripleRepository extends JpaRepository<Triple, Long> {
     @Modifying
     @Query("UPDATE Triple t SET t.objectId = :newId WHERE t.objectId = :oldId")
     void updateObjectId(@Param("oldId") Long oldId, @Param("newId") Long newId);
+
+    @Query("SELECT MIN(COALESCE(t.timePoint, t.timeStart)) FROM Triple t")
+    OffsetDateTime findEarliestTimePoint();
+
+    @Query("SELECT MAX(COALESCE(t.timePoint, t.timeEnd)) FROM Triple t")
+    OffsetDateTime findLatestTimePoint();
+
+    @Query("SELECT FUNCTION('DATE_TRUNC', 'month', COALESCE(t.timePoint, t.timeStart)) as month, COUNT(t) as count " +
+           "FROM Triple t " +
+           "WHERE COALESCE(t.timePoint, t.timeStart) IS NOT NULL " +
+           "GROUP BY FUNCTION('DATE_TRUNC', 'month', COALESCE(t.timePoint, t.timeStart)) " +
+           "ORDER BY month")
+    List<Object[]> countByMonth();
 }

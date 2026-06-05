@@ -15,7 +15,8 @@ api.interceptors.response.use(
 
 export default {
   stats: {
-    overview: () => api.get('/stats/overview')
+    overview: () => api.get('/stats/overview'),
+    timeRange: () => api.get('/stats/time-range')
   },
   import: {
     uploadCsv: (file) => {

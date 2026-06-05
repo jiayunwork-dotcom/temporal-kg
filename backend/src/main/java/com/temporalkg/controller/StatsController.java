@@ -18,4 +18,9 @@ public class StatsController {
     public ResponseEntity<Map<String, Object>> getOverview() {
         return ResponseEntity.ok(statsService.getOverview());
     }
+
+    @GetMapping("/time-range")
+    public ResponseEntity<Map<String, Object>> getTimeRange() {
+        return ResponseEntity.ok(statsService.getTimeRange());
+    }
 }

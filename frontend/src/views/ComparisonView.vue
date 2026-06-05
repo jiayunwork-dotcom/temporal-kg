@@ -1,27 +1,89 @@
 <template>
   <div>
-    <h2 style="margin-top: 0">图谱对比与演化分析</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px">
+      <h2 style="margin: 0">图谱对比与演化分析</h2>
+      <el-button type="success" :icon="Download" @click="exportReport" :disabled="!result">导出报告</el-button>
+    </div>
 
     <el-card style="margin-bottom: 16px">
-      <el-row :gutter="16" align="middle">
-        <el-col :span="7">
-          <span style="font-size: 13px; color: #666; margin-right: 6px">T1:</span>
-          <el-date-picker v-model="t1" type="datetime" placeholder="选择时间点T1" style="width: 100%" />
-        </el-col>
-        <el-col :span="7">
-          <span style="font-size: 13px; color: #666; margin-right: 6px">T2:</span>
-          <el-date-picker v-model="t2" type="datetime" placeholder="选择时间点T2" style="width: 100%" />
-        </el-col>
-        <el-col :span="4">
-          <el-input v-model="filterEntity" placeholder="过滤实体名称" clearable size="default" />
-        </el-col>
-        <el-col :span="4">
-          <el-input v-model="filterRelation" placeholder="过滤关系类型" clearable size="default" />
-        </el-col>
-        <el-col :span="2">
-          <el-button type="primary" @click="executeCompare" :loading="loading" style="width: 100%">执行对比</el-button>
-        </el-col>
-      </el-row>
+      <div style="padding: 8px 12px 16px">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px">
+          <div style="font-size: 13px; color: #666">时间范围对比: T1 到 T2</div>
+          <div style="display: flex; gap: 24px">
+            <div>
+              <span style="font-size: 13px; color: #666; margin-right: 6px">T1:</span>
+              <span style="font-weight: bold; color: #409eff">{{ formatDateLabel(sliderValues[0]) }}</span>
+            </div>
+            <div>
+              <span style="font-size: 13px; color: #666; margin-right: 6px">T2:</span>
+              <span style="font-weight: bold; color: #e6a23c">{{ formatDateLabel(sliderValues[1]) }}</span>
+            </div>
+          </div>
+        </div>
+        
+        <el-slider
+          v-model="sliderValues"
+          :min="sliderMin"
+          :max="sliderMax"
+          range
+          :step="86400000"
+          :show-tooltip="false"
+          @change="onSliderChange"
+          style="margin: 8px 0 16px"
+        />
+
+        <div ref="timelineContainer" style="width: 100%; height: 40px; position: relative; margin-top: 8px">
+          <div style="display: flex; align-items: center; height: 100%">
+            <div style="flex: 1; height: 24px; position: relative">
+              <svg ref="timelineSvg" :width="timelineWidth" height="24" style="display: block">
+                <g v-if="timeRangeData">
+                  <rect
+                    v-for="(bar, idx) in timelineBars"
+                    :key="idx"
+                    :x="bar.x"
+                    :y="24 - bar.height"
+                    :width="bar.width"
+                    :height="bar.height"
+                    fill="#c0c4cc"
+                    opacity="0.6"
+                  />
+                  <line
+                    v-for="(bar, idx) in timelineBars"
+                    :key="'line-' + idx"
+                    :x1="bar.x + bar.width / 2"
+                    :y1="0"
+                    :x2="bar.x + bar.width / 2"
+                    :y2="24"
+                    stroke="#909399"
+                    stroke-width="1"
+                    opacity="0.3"
+                  />
+                </g>
+              </svg>
+              <div
+                v-if="timeRangeData && timeRangeData.monthlyDistribution"
+                style="display: flex; justify-content: space-between; position: absolute; left: 0; right: 0; bottom: -18px; font-size: 10px; color: #999"
+              >
+                <span>{{ formatMonthLabel(timeRangeData.monthlyDistribution[0]?.month) }}</span>
+                <span>{{ formatMonthLabel(timeRangeData.monthlyDistribution[Math.floor(timeRangeData.monthlyDistribution.length / 2)]?.month) }}</span>
+                <span>{{ formatMonthLabel(timeRangeData.monthlyDistribution[timeRangeData.monthlyDistribution.length - 1]?.month) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <el-row :gutter="16" align="middle" style="margin-top: 28px">
+          <el-col :span="7">
+            <el-input v-model="filterEntity" placeholder="过滤实体名称" clearable size="default" />
+          </el-col>
+          <el-col :span="7">
+            <el-input v-model="filterRelation" placeholder="过滤关系类型" clearable size="default" />
+          </el-col>
+          <el-col :span="4">
+            <el-button type="primary" @click="executeCompare" :loading="loading" style="width: 100%">执行对比</el-button>
+          </el-col>
+        </el-row>
+      </div>
     </el-card>
 
     <template v-if="result">
@@ -59,17 +121,42 @@
             </el-descriptions-item>
           </el-descriptions>
 
-          <el-divider content-position="left" style="margin: 16px 0 12px">实体活跃度 Top 10</el-divider>
-          <div style="max-height: 220px; overflow-y: auto">
-            <div v-for="(ea, idx) in result.entityActivities.slice(0, 10)" :key="ea.entityId"
-                 style="display: flex; align-items: center; padding: 4px 0; border-bottom: 1px solid #f5f5f5; font-size: 13px">
+          <el-divider content-position="left" style="margin: 16px 0 12px">活跃度排行 Top 10</el-divider>
+          <div style="max-height: 320px; overflow-y: auto">
+            <div
+              v-for="(ea, idx) in result.entityActivities.slice(0, 10)"
+              :key="ea.entityId"
+              @click="toggleEntityHighlight(ea.entityName)"
+              style="display: flex; align-items: center; padding: 6px 8px; margin: 2px 0; border-radius: 4px; cursor: pointer; transition: background-color 0.2s"
+              :class="{ 'highlighted-bar': highlightedEntity === ea.entityName }"
+            >
               <span style="width: 24px; color: #999; font-size: 12px">{{ idx + 1 }}</span>
-              <span style="flex: 1; font-weight: 500">{{ ea.entityName }}</span>
-              <el-progress :percentage="ea.activityScore * 100" :stroke-width="8" :show-text="false"
-                           style="width: 80px; margin-right: 8px" :color="activityColor(ea.activityScore)" />
-              <span style="font-size: 12px; color: #999; min-width: 48px; text-align: right">
-                {{ (ea.activityScore * 100).toFixed(1) }}%
-              </span>
+              <span style="flex: 1; font-weight: 500; margin-right: 8px; font-size: 13px">{{ ea.entityName }}</span>
+            </div>
+            <div ref="activityChartContainer" style="position: relative; margin-top: -248px; pointer-events: none">
+              <svg ref="activityChartSvg" :width="308" height="248" style="display: block">
+                <g v-if="result.entityActivities">
+                  <g v-for="(ea, idx) in result.entityActivities.slice(0, 10)" :key="'bar-' + ea.entityId" :transform="`translate(32, ${idx * 24.8})`">
+                    <rect
+                      :x="0"
+                      :y="4"
+                      :width="getActivityBarWidth(ea.activityScore)"
+                      height="18"
+                      :fill="activityBarColor(ea.activityScore)"
+                      rx="3"
+                      :opacity="highlightedEntity && highlightedEntity !== ea.entityName ? 0.3 : 0.9"
+                    />
+                    <text
+                      :x="getActivityBarWidth(ea.activityScore) + 6"
+                      :y="17"
+                      font-size="11"
+                      :fill="highlightedEntity && highlightedEntity !== ea.entityName ? '#999' : '#666'"
+                    >
+                      {{ (ea.activityScore * 100).toFixed(1) }}%
+                    </text>
+                  </g>
+                </g>
+              </svg>
             </div>
           </div>
         </el-card>
@@ -108,13 +195,12 @@
 </template>
 
 <script setup>
-import { ref, nextTick } from 'vue'
+import { ref, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Download } from '@element-plus/icons-vue'
 import * as d3 from 'd3'
 import api from '../api'
 
-const t1 = ref(null)
-const t2 = ref(null)
 const filterEntity = ref('')
 const filterRelation = ref('')
 const loading = ref(false)
@@ -123,11 +209,45 @@ const graphContainer = ref(null)
 const heatmapContainer = ref(null)
 const graphRendered = ref(false)
 
+const timeRangeData = ref(null)
+const sliderMin = ref(0)
+const sliderMax = ref(100)
+const sliderValues = ref([0, 100])
+const timelineContainer = ref(null)
+const timelineSvg = ref(null)
+const timelineWidth = ref(0)
+const timelineBars = ref([])
+
+const highlightedEntity = ref(null)
+const activityChartContainer = ref(null)
+const activityChartSvg = ref(null)
+
+let linkElements = null
+let linkLabels = null
+let nodeElements = null
+let diffEdgesGlobal = null
+let heatmapCells = null
+let heatmapRowLabels = null
+let heatmapColLabels = null
+let entityRelationTypes = new Map()
+
 function formatTime(date) {
   if (!date) return ''
   const d = new Date(date)
   const pad = n => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function formatDateLabel(timestamp) {
+  if (!timestamp) return ''
+  const d = new Date(timestamp)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function formatMonthLabel(monthStr) {
+  if (!monthStr) return ''
+  return monthStr
 }
 
 function formatPercent(val) {
@@ -147,33 +267,100 @@ function activityColor(score) {
   return '#409eff'
 }
 
+function activityBarColor(score) {
+  const r = Math.round(100 + score * 155)
+  const g = Math.round(150 - score * 100)
+  const b = Math.round(200 - score * 100)
+  return `rgb(${r}, ${g}, ${b})`
+}
+
+function getActivityBarWidth(score) {
+  return Math.max(20, score * 180)
+}
+
 function nodeColorByActivity(activity) {
   const r = Math.round(activity * 240)
   const b = Math.round((1 - activity) * 240)
   return `rgb(${r}, 60, ${b})`
 }
 
+async function loadTimeRange() {
+  try {
+    const { data } = await api.stats.timeRange()
+    timeRangeData.value = data
+    
+    if (data.earliest && data.latest) {
+      const earliest = new Date(data.earliest).getTime()
+      const latest = new Date(data.latest).getTime()
+      sliderMin.value = earliest
+      sliderMax.value = latest
+      sliderValues.value = [earliest, latest]
+      
+      await nextTick()
+      renderTimeline()
+    }
+  } catch (e) {
+    console.error('Failed to load time range:', e)
+  }
+}
+
+function renderTimeline() {
+  if (!timelineContainer.value || !timeRangeData.value?.monthlyDistribution) return
+  
+  const containerWidth = timelineContainer.value.clientWidth - 30
+  timelineWidth.value = containerWidth
+  
+  const distribution = timeRangeData.value.monthlyDistribution
+  if (distribution.length === 0) return
+  
+  const maxCount = Math.max(...distribution.map(d => d.count))
+  const barWidth = Math.max(2, Math.min(8, containerWidth / distribution.length - 2))
+  
+  timelineBars.value = distribution.map((d, idx) => ({
+    x: idx * (containerWidth / distribution.length) + (containerWidth / distribution.length - barWidth) / 2,
+    width: barWidth,
+    height: Math.max(2, (d.count / maxCount) * 20),
+    count: d.count,
+    month: d.month
+  }))
+}
+
+function onSliderChange() {
+  executeCompare()
+}
+
 async function executeCompare() {
-  if (!t1.value || !t2.value) {
-    ElMessage.warning('请选择T1和T2时间点')
+  const t1 = sliderValues.value[0]
+  const t2 = sliderValues.value[1]
+  
+  if (!t1 || !t2) {
+    ElMessage.warning('请选择有效的时间范围')
     return
   }
-  if (new Date(t1.value) >= new Date(t2.value)) {
+  if (t1 >= t2) {
     ElMessage.warning('T1必须早于T2')
     return
   }
 
   loading.value = true
+  highlightedEntity.value = null
   try {
     const payload = {
-      t1: formatTime(t1.value),
-      t2: formatTime(t2.value),
+      t1: formatTime(t1),
+      t2: formatTime(t2),
       filterEntity: filterEntity.value || null,
       filterRelation: filterRelation.value || null
     }
     const { data } = await api.comparison.compare(payload)
     result.value = data
     graphRendered.value = false
+    entityRelationTypes.clear()
+    
+    data.addedTriples?.forEach(t => collectEntityRelations(t))
+    data.deletedTriples?.forEach(t => collectEntityRelations(t))
+    data.changedTriples?.forEach(t => collectEntityRelations(t))
+    data.persistedTriples?.forEach(t => collectEntityRelations(t))
+    
     await nextTick()
     renderDiffGraph(data)
     renderHeatmap(data)
@@ -181,6 +368,84 @@ async function executeCompare() {
     ElMessage.error('对比失败: ' + (e.response?.data?.message || e.message))
   } finally {
     loading.value = false
+  }
+}
+
+function collectEntityRelations(t) {
+  if (!t) return
+  const rel = t.relation || t.oldRelation
+  if (!rel) return
+  
+  if (!entityRelationTypes.has(t.subject)) {
+    entityRelationTypes.set(t.subject, new Set())
+  }
+  entityRelationTypes.get(t.subject).add(rel)
+  
+  if (!entityRelationTypes.has(t.object)) {
+    entityRelationTypes.set(t.object, new Set())
+  }
+  entityRelationTypes.get(t.object).add(rel)
+}
+
+function toggleEntityHighlight(entityName) {
+  if (highlightedEntity.value === entityName) {
+    highlightedEntity.value = null
+  } else {
+    highlightedEntity.value = entityName
+  }
+  applyHighlight()
+}
+
+function applyHighlight() {
+  const entityName = highlightedEntity.value
+  
+  if (linkElements) {
+    if (!entityName) {
+      linkElements.attr('stroke-opacity', d => d.diffType === 'PERSISTED' ? 0.4 : 0.8)
+      linkLabels.attr('fill-opacity', 0.8)
+      nodeElements.style('opacity', 1)
+    } else {
+      linkElements.attr('stroke-opacity', d => {
+        const isRelated = d.source === entityName || d.target === entityName || 
+                          (d.source.name && (d.source.name === entityName || d.target.name === entityName)) ||
+                          (typeof d.source === 'object' && (d.source.name === entityName || d.target.name === entityName))
+        return isRelated ? 1.0 : 0.1
+      })
+      linkLabels.attr('fill-opacity', d => {
+        const isRelated = d.source === entityName || d.target === entityName ||
+                          (d.source.name && (d.source.name === entityName || d.target.name === entityName)) ||
+                          (typeof d.source === 'object' && (d.source.name === entityName || d.target.name === entityName))
+        return isRelated ? 1.0 : 0.1
+      })
+      nodeElements.style('opacity', d => {
+        return d.name === entityName ? 1.0 : 0.5
+      })
+    }
+  }
+  
+  if (heatmapCells && result.value?.transferMatrix) {
+    const relationTypes = result.value.transferMatrix.relationTypes
+    const relatedRelations = entityName ? entityRelationTypes.get(entityName) || new Set() : null
+    
+    if (!relatedRelations) {
+      heatmapCells.attr('opacity', 1)
+      heatmapRowLabels.attr('opacity', 1)
+      heatmapColLabels.attr('opacity', 1)
+    } else {
+      heatmapCells.attr('opacity', (d, i) => {
+        const rowIdx = Math.floor(i / relationTypes.length)
+        const colIdx = i % relationTypes.length
+        const rowRel = relationTypes[rowIdx]
+        const colRel = relationTypes[colIdx]
+        return relatedRelations.has(rowRel) || relatedRelations.has(colRel) ? 1.0 : 0.1
+      })
+      heatmapRowLabels.attr('opacity', (d, i) => {
+        return relatedRelations.has(relationTypes[i]) ? 1.0 : 0.3
+      })
+      heatmapColLabels.attr('opacity', (d, i) => {
+        return relatedRelations.has(relationTypes[i]) ? 1.0 : 0.3
+      })
+    }
   }
 }
 
@@ -208,6 +473,7 @@ function buildDiffEdges(result) {
   addEdges(result.changedTriples || [], 'CHANGED')
   addEdges(result.persistedTriples || [], 'PERSISTED')
 
+  diffEdgesGlobal = edges
   return edges
 }
 
@@ -273,7 +539,7 @@ function renderDiffGraph(data) {
   }
 
   const linkGroup = svg.append('g')
-  const linkElements = linkGroup.selectAll('line')
+  linkElements = linkGroup.selectAll('line')
     .data(diffEdges)
     .join('line')
     .attr('stroke', d => diffColorMap[d.diffType] || '#999')
@@ -281,7 +547,7 @@ function renderDiffGraph(data) {
     .attr('stroke-opacity', d => d.diffType === 'PERSISTED' ? 0.4 : 0.8)
     .attr('stroke-dasharray', d => d.diffType === 'DELETED' ? '6,3' : (d.diffType === 'PERSISTED' ? '2,2' : null))
 
-  const linkLabels = svg.append('g').selectAll('text')
+  linkLabels = svg.append('g').selectAll('text')
     .data(diffEdges)
     .join('text')
     .text(d => d.diffType === 'CHANGED' && d.oldRelation ? `${d.oldRelation}→${d.relation}` : (d.relation || ''))
@@ -291,7 +557,7 @@ function renderDiffGraph(data) {
     .attr('fill-opacity', 0.8)
 
   const nodeGroup = svg.append('g')
-  const nodeElements = nodeGroup.selectAll('g')
+  nodeElements = nodeGroup.selectAll('g')
     .data(nodes, d => d.id)
     .join('g')
     .style('cursor', 'pointer')
@@ -364,41 +630,40 @@ function renderHeatmap(data) {
 
   const g = svg.append('g').attr('transform', `translate(${labelWidth}, ${labelHeight})`)
 
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      const val = matrix[i][j]
-      g.append('rect')
-        .attr('x', j * cellSize)
-        .attr('y', i * cellSize)
-        .attr('width', cellSize - 1)
-        .attr('height', cellSize - 1)
-        .attr('fill', colorScale(val))
-        .attr('stroke', '#fff')
-        .attr('stroke-width', 0.5)
-        .append('title')
-        .text(`${types[i]} → ${types[j]}: ${val}`)
-    }
-  }
+  heatmapCells = g.selectAll('.heatmap-cell')
+    .data(types.flatMap((rowType, i) => 
+      types.map((colType, j) => ({ row: i, col: j, value: matrix[i][j], rowType, colType }))
+    ))
+    .join('rect')
+    .attr('class', 'heatmap-cell')
+    .attr('x', d => d.col * cellSize)
+    .attr('y', d => d.row * cellSize)
+    .attr('width', cellSize - 1)
+    .attr('height', cellSize - 1)
+    .attr('fill', d => colorScale(d.value))
+    .attr('stroke', '#fff')
+    .attr('stroke-width', 0.5)
+    .append('title')
+    .text(d => `${types[d.row]} → ${types[d.col]}: ${d.value}`)
 
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      const val = matrix[i][j]
-      if (val > 0) {
-        g.append('text')
-          .attr('x', j * cellSize + cellSize / 2)
-          .attr('y', i * cellSize + cellSize / 2 + 4)
-          .attr('text-anchor', 'middle')
-          .attr('font-size', cellSize < 35 ? 9 : 11)
-          .attr('fill', val > maxVal * 0.6 ? '#fff' : '#333')
-          .attr('style', 'pointer-events: none')
-          .text(val)
-      }
-    }
-  }
+  g.selectAll('.heatmap-cell-text')
+    .data(types.flatMap((rowType, i) => 
+      types.map((colType, j) => ({ row: i, col: j, value: matrix[i][j] }))
+    ))
+    .join('text')
+    .attr('class', 'heatmap-cell-text')
+    .attr('x', d => d.col * cellSize + cellSize / 2)
+    .attr('y', d => d.row * cellSize + cellSize / 2 + 4)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', cellSize < 35 ? 9 : 11)
+    .attr('fill', d => d.value > maxVal * 0.6 ? '#fff' : '#333')
+    .attr('style', 'pointer-events: none')
+    .text(d => d.value > 0 ? d.value : '')
 
-  g.selectAll('.row-label')
+  heatmapRowLabels = g.selectAll('.row-label')
     .data(types)
     .join('text')
+    .attr('class', 'row-label')
     .attr('x', -4)
     .attr('y', (d, i) => i * cellSize + cellSize / 2 + 4)
     .attr('text-anchor', 'end')
@@ -407,9 +672,10 @@ function renderHeatmap(data) {
     .append('title')
     .text(d => d)
 
-  g.selectAll('.col-label')
+  heatmapColLabels = g.selectAll('.col-label')
     .data(types)
     .join('text')
+    .attr('class', 'col-label')
     .attr('x', (d, i) => i * cellSize + cellSize / 2)
     .attr('y', -4)
     .attr('text-anchor', 'end')
@@ -419,7 +685,55 @@ function renderHeatmap(data) {
     .append('title')
     .text(d => d)
 }
+
+function exportReport() {
+  if (!result.value) {
+    ElMessage.warning('请先执行对比')
+    return
+  }
+  
+  const t1Date = formatDateLabel(sliderValues.value[0])
+  const t2Date = formatDateLabel(sliderValues.value[1])
+  
+  const reportData = {
+    t1: formatTime(sliderValues.value[0]),
+    t2: formatTime(sliderValues.value[1]),
+    diffSummary: result.value.diffSummary,
+    evolutionMetrics: result.value.evolutionMetrics,
+    addedTriples: result.value.addedTriples || [],
+    deletedTriples: result.value.deletedTriples || [],
+    changedTriples: result.value.changedTriples || [],
+    persistedTriples: result.value.persistedTriples || [],
+    transferMatrix: result.value.transferMatrix,
+    exportedAt: new Date().toISOString()
+  }
+  
+  const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `comparison_${t1Date}_${t2Date}.json`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+  
+  ElMessage.success('报告导出成功')
+}
+
+watch(highlightedEntity, () => {
+  applyHighlight()
+})
+
+onMounted(() => {
+  loadTimeRange()
+  window.addEventListener('resize', renderTimeline)
+})
 </script>
 
 <style scoped>
+.highlighted-bar {
+  background-color: #ecf5ff;
+  border: 1px solid #409eff;
+}
 </style>

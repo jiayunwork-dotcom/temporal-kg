@@ -9,7 +9,11 @@ import com.temporalkg.repository.ModelJobRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -40,5 +44,33 @@ public class StatsService {
         stats.put("entityTypeDistribution", entityTypeDist);
 
         return stats;
+    }
+
+    public Map<String, Object> getTimeRange() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        OffsetDateTime earliest = tripleRepository.findEarliestTimePoint();
+        OffsetDateTime latest = tripleRepository.findLatestTimePoint();
+        
+        DateTimeFormatter formatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
+        result.put("earliest", earliest != null ? earliest.format(formatter) : null);
+        result.put("latest", latest != null ? latest.format(formatter) : null);
+        
+        List<Map<String, Object>> distribution = new ArrayList<>();
+        List<Object[]> monthCounts = tripleRepository.countByMonth();
+        DateTimeFormatter monthFormatter = DateTimeFormatter.ofPattern("yyyy-MM");
+        
+        for (Object[] row : monthCounts) {
+            if (row[0] != null) {
+                OffsetDateTime month = (OffsetDateTime) row[0];
+                Long count = ((Number) row[1]).longValue();
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("month", month.format(monthFormatter));
+                item.put("count", count);
+                distribution.add(item);
+            }
+        }
+        result.put("monthlyDistribution", distribution);
+        
+        return result;
     }
 }
