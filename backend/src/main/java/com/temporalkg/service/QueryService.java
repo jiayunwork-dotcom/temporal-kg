@@ -25,6 +25,16 @@ public class QueryService {
     private final GraphRelationRepository relationRepository;
     private final GraphService graphService;
 
+    private Optional<GraphEntity> findEntityByName(String name) {
+        if (name == null || name.isBlank()) return Optional.empty();
+        List<GraphEntity> candidates = entityRepository.findAllByName(name);
+        if (candidates.isEmpty()) return Optional.empty();
+        return candidates.stream()
+                .filter(e -> !"UNKNOWN".equals(e.getEntityType()))
+                .findFirst()
+                .or(() -> Optional.of(candidates.get(0)));
+    }
+
     public List<TripleDTO> basicQuery(String entityName, String relationType, String timeStart, String timeEnd) {
         List<Triple> triples;
 
@@ -47,18 +57,20 @@ public class QueryService {
             }
         }
 
-        if (timeStart != null && timeEnd != null) {
+        if (timeStart != null && !timeStart.isBlank() && timeEnd != null && !timeEnd.isBlank()) {
             OffsetDateTime start = graphService.parseTimestamp(timeStart);
             OffsetDateTime end = graphService.parseTimestamp(timeEnd);
-            triples = triples.stream().filter(t -> isInRange(t, start, end)).toList();
+            if (start != null && end != null) {
+                triples = triples.stream().filter(t -> isInRange(t, start, end)).toList();
+            }
         }
 
         return triples.stream().map(graphService::toDTO).toList();
     }
 
     public List<PathDTO> findPaths(String fromEntity, String toEntity, int maxHops, boolean shortestOnly) {
-        Optional<GraphEntity> from = entityRepository.findByName(fromEntity);
-        Optional<GraphEntity> to = entityRepository.findByName(toEntity);
+        Optional<GraphEntity> from = findEntityByName(fromEntity);
+        Optional<GraphEntity> to = findEntityByName(toEntity);
 
         if (from.isEmpty() || to.isEmpty()) return List.of();
 
@@ -74,7 +86,7 @@ public class QueryService {
     }
 
     public SubGraphDTO extractSubGraph(String centerEntity, int hops) {
-        Optional<GraphEntity> center = entityRepository.findByName(centerEntity);
+        Optional<GraphEntity> center = findEntityByName(centerEntity);
         if (center.isEmpty()) return new SubGraphDTO(List.of(), List.of());
 
         Long centerId = center.get().getId();
@@ -146,7 +158,7 @@ public class QueryService {
     }
 
     public List<TripleDTO> entityTimeline(String entityName) {
-        Optional<GraphEntity> entity = entityRepository.findByName(entityName);
+        Optional<GraphEntity> entity = findEntityByName(entityName);
         if (entity.isEmpty()) return List.of();
 
         List<Triple> timeline = tripleRepository.findEntityTimeline(entity.get().getId());

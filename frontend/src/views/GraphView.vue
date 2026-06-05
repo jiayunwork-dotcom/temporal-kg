@@ -28,11 +28,18 @@
       </el-row>
     </el-card>
 
-    <el-card v-if="playing" style="margin-bottom: 16px">
+    <el-card v-if="showTimeControls" style="margin-bottom: 16px">
       <div style="display: flex; align-items: center; gap: 16px">
-        <span>时间点: {{ currentTimeLabel }}</span>
-        <el-slider v-model="timeSliderValue" :min="0" :max="timeSliderMax" style="flex: 1" />
-        <el-button size="small" @click="stopAnimation">停止</el-button>
+        <span style="white-space: nowrap; min-width: 140px">时间点: {{ currentTimeLabel }}</span>
+        <el-slider
+          v-model="timeSliderValue"
+          :min="0"
+          :max="timeSliderMax"
+          @input="onSliderInput"
+          style="flex: 1"
+        />
+        <el-button v-if="playing" size="small" @click="stopAnimation">停止</el-button>
+        <el-button v-else size="small" type="primary" @click="playAnimation">播放</el-button>
       </div>
     </el-card>
 
@@ -70,6 +77,7 @@ const graphContainer = ref(null)
 const graphData = ref(null)
 const selectedNode = ref(null)
 const playing = ref(false)
+const showTimeControls = ref(false)
 const timeSliderValue = ref(0)
 const timeSliderMax = ref(100)
 const currentTimeLabel = ref('')
@@ -78,12 +86,19 @@ const timelineEntity = ref('')
 const timelineContainer = ref(null)
 
 let simulation = null
+let linkElements = null
+let nodeElements = null
+let linkLabelElements = null
+let animationTimeRange = null
+let currentAnimationStep = 0
 
 async function loadSubGraph() {
   if (!searchEntity.value) { ElMessage.warning('请输入实体名称'); return }
   try {
     const { data } = await api.graph.subgraph({ entity: searchEntity.value, hops: hops.value })
     graphData.value = data
+    showTimeControls.value = false
+    animationTimeRange = null
     await nextTick()
     renderGraph(data)
   } catch (e) { ElMessage.error('加载失败: ' + e.message) }
@@ -93,6 +108,8 @@ async function loadFullGraph() {
   try {
     const { data } = await api.graph.full({ limit: 500 })
     graphData.value = data
+    showTimeControls.value = false
+    animationTimeRange = null
     await nextTick()
     renderGraph(data)
   } catch (e) { ElMessage.error('加载失败: ' + e.message) }
@@ -108,10 +125,112 @@ async function loadTimeline(entityName) {
   } catch (e) { ElMessage.error('加载时间线失败') }
 }
 
+function computeTimeRange(edges) {
+  let min = Infinity
+  let max = -Infinity
+  for (const e of edges) {
+    const times = [e.timePoint, e.timeStart, e.timeEnd]
+      .filter(Boolean)
+      .map(t => new Date(t).getTime())
+      .filter(t => !isNaN(t))
+    if (times.length > 0) {
+      min = Math.min(min, ...times)
+      max = Math.max(max, ...times)
+    }
+  }
+  if (min === Infinity) return null
+  const pad = (max - min) * 0.05 || 86400000
+  return { min: min - pad, max: max + pad }
+}
+
+function isEdgeActiveAt(edge, timestampMs) {
+  if (edge.timePoint) {
+    const tp = new Date(edge.timePoint).getTime()
+    if (!isNaN(tp)) return tp <= timestampMs
+  }
+  if (edge.timeStart && edge.timeEnd) {
+    const s = new Date(edge.timeStart).getTime()
+    const e = new Date(edge.timeEnd).getTime()
+    if (!isNaN(s) && !isNaN(e)) return timestampMs >= s && timestampMs <= e
+  }
+  if (edge.timeStart) {
+    const s = new Date(edge.timeStart).getTime()
+    if (!isNaN(s)) return s <= timestampMs
+  }
+  return true
+}
+
+function updateTimeHighlight(timestampMs) {
+  if (!linkElements || !nodeElements) return
+
+  const activeEntityIds = new Set()
+
+  linkElements
+    .transition()
+    .duration(150)
+    .attr('stroke-opacity', d => isEdgeActiveAt(d, timestampMs) ? 0.9 : 0.06)
+    .attr('stroke', d => isEdgeActiveAt(d, timestampMs) ? '#409eff' : '#ddd')
+    .attr('stroke-width', d => {
+      const base = d.strokeWidth || 2
+      return isEdgeActiveAt(d, timestampMs) ? base * 1.8 : base * 0.4
+    })
+
+  if (linkLabelElements) {
+    linkLabelElements
+      .transition()
+      .duration(150)
+      .attr('fill-opacity', d => isEdgeActiveAt(d, timestampMs) ? 1 : 0.1)
+  }
+
+  const edgeData = linkElements.data()
+  if (edgeData) {
+    edgeData.forEach(d => {
+      if (isEdgeActiveAt(d, timestampMs)) {
+        const srcId = typeof d.source === 'object' ? d.source.id : d.source
+        const tgtId = typeof d.target === 'object' ? d.target.id : d.target
+        if (srcId != null) activeEntityIds.add(srcId)
+        if (tgtId != null) activeEntityIds.add(tgtId)
+      }
+    })
+  }
+
+  nodeElements
+    .transition()
+    .duration(150)
+    .attr('opacity', d => activeEntityIds.has(d.id) ? 1 : 0.12)
+}
+
+function resetHighlight() {
+  if (linkElements) {
+    linkElements
+      .transition()
+      .duration(300)
+      .attr('stroke-opacity', 0.6)
+      .attr('stroke', '#999')
+      .attr('stroke-width', d => d.strokeWidth || 2)
+  }
+  if (linkLabelElements) {
+    linkLabelElements
+      .transition()
+      .duration(300)
+      .attr('fill-opacity', 1)
+  }
+  if (nodeElements) {
+    nodeElements
+      .transition()
+      .duration(300)
+      .attr('opacity', 1)
+  }
+}
+
 function renderGraph(data) {
   const container = graphContainer.value
   if (!container) return
   d3.select(container).selectAll('*').remove()
+
+  linkElements = null
+  nodeElements = null
+  linkLabelElements = null
 
   const width = container.clientWidth
   const height = container.clientHeight
@@ -138,14 +257,14 @@ function renderGraph(data) {
     .force('collision', d3.forceCollide().radius(d => d.radius + 5))
 
   const linkGroup = svg.append('g')
-  const link = linkGroup.selectAll('line')
+  linkElements = linkGroup.selectAll('line')
     .data(edges)
     .join('line')
     .attr('stroke', '#999')
     .attr('stroke-width', d => d.strokeWidth)
     .attr('stroke-opacity', 0.6)
 
-  const linkLabel = svg.append('g').selectAll('text')
+  linkLabelElements = svg.append('g').selectAll('text')
     .data(edges)
     .join('text')
     .text(d => d.relation || '')
@@ -154,7 +273,7 @@ function renderGraph(data) {
     .attr('text-anchor', 'middle')
 
   const nodeGroup = svg.append('g')
-  const node = nodeGroup.selectAll('g')
+  nodeElements = nodeGroup.selectAll('g')
     .data(nodes)
     .join('g')
     .call(d3.drag()
@@ -163,7 +282,7 @@ function renderGraph(data) {
       .on('end', (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null })
     )
 
-  node.append('circle')
+  nodeElements.append('circle')
     .attr('r', d => d.radius)
     .attr('fill', d => typeColor(d.type || 'UNKNOWN'))
     .attr('stroke', '#fff')
@@ -174,18 +293,18 @@ function renderGraph(data) {
       await loadSubGraph()
     })
 
-  node.append('text')
+  nodeElements.append('text')
     .text(d => d.name.length > 8 ? d.name.substring(0, 8) + '...' : d.name)
     .attr('dy', d => d.radius + 14)
     .attr('text-anchor', 'middle')
     .attr('font-size', 11)
 
   simulation.on('tick', () => {
-    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+    linkElements.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
         .attr('x2', d => d.target.x).attr('y2', d => d.target.y)
-    linkLabel.attr('x', d => (d.source.x + d.target.x) / 2)
+    linkLabelElements.attr('x', d => (d.source.x + d.target.x) / 2)
              .attr('y', d => (d.source.y + d.target.y) / 2 - 5)
-    node.attr('transform', d => `translate(${d.x},${d.y})`)
+    nodeElements.attr('transform', d => `translate(${d.x},${d.y})`)
   })
 }
 
@@ -238,30 +357,56 @@ function renderTimeline(timelineData) {
 }
 
 async function playAnimation() {
+  if (!graphData.value || !graphData.value.edges?.length) {
+    await loadFullGraph()
+  }
+  if (!graphData.value?.edges?.length) {
+    ElMessage.warning('没有图谱数据，请先加载图谱')
+    return
+  }
+
+  animationTimeRange = computeTimeRange(graphData.value.edges)
+  if (!animationTimeRange) {
+    ElMessage.warning('图谱数据中没有时间信息，无法播放时间演化')
+    return
+  }
+
   playing.value = true
-  const now = new Date()
-  const start = new Date(now.getFullYear() - 5, 0, 1)
+  showTimeControls.value = true
   const totalSteps = 100
   timeSliderMax.value = totalSteps
 
-  for (let i = 0; i <= totalSteps && playing.value; i++) {
+  if (currentAnimationStep > totalSteps) {
+    currentAnimationStep = 0
+  }
+
+  for (let i = currentAnimationStep; i <= totalSteps && playing.value; i++) {
+    currentAnimationStep = i
     timeSliderValue.value = i
-    const point = new Date(start.getTime() + (now.getTime() - start.getTime()) * (i / totalSteps))
-    currentTimeLabel.value = point.toISOString().split('T')[0]
+    const timeMs = animationTimeRange.min + (animationTimeRange.max - animationTimeRange.min) * (i / totalSteps)
+    currentTimeLabel.value = new Date(timeMs).toISOString().split('T')[0]
+    updateTimeHighlight(timeMs)
 
-    try {
-      const { data } = await api.graph.timeSlice({ timePoint: point.toISOString() })
-      if (data.nodes && data.nodes.length > 0) {
-        graphData.value = data
-        await nextTick()
-        renderGraph(data)
-      }
-    } catch (e) { /* ignore */ }
+    await new Promise(r => setTimeout(r, 200))
+  }
 
-    await new Promise(r => setTimeout(r, 500))
+  if (currentAnimationStep >= totalSteps) {
+    currentAnimationStep = 0
   }
   playing.value = false
 }
 
-function stopAnimation() { playing.value = false }
+function onSliderInput(val) {
+  if (!animationTimeRange) return
+  const timeMs = animationTimeRange.min + (animationTimeRange.max - animationTimeRange.min) * (val / timeSliderMax.value)
+  currentTimeLabel.value = new Date(timeMs).toISOString().split('T')[0]
+  currentAnimationStep = val
+  updateTimeHighlight(timeMs)
+}
+
+function stopAnimation() {
+  playing.value = false
+  currentAnimationStep = 0
+  resetHighlight()
+}
 </script>
