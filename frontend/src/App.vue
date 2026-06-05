@@ -43,6 +43,10 @@
           <el-icon><Bell /></el-icon>
           <span>事件预警</span>
         </el-menu-item>
+        <el-menu-item index="/comparison">
+          <el-icon><DataLine /></el-icon>
+          <span>图谱对比与演化</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
     <el-main style="padding: 20px; background: #f0f2f5; overflow: auto">
@@ -54,7 +58,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { DataAnalysis, Upload, Share, Search, Cpu, Connection, TrendCharts, Bell } from '@element-plus/icons-vue'
+import { DataAnalysis, Upload, Share, Search, Cpu, Connection, TrendCharts, Bell, DataLine } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const activeRoute = computed(() => route.path)

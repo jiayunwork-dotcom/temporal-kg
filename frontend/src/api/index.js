@@ -58,6 +58,9 @@ export default {
     list: (params) => api.get('/patterns', { params }),
     get: (id) => api.get(`/patterns/${id}`)
   },
+  comparison: {
+    compare: (data) => api.post('/comparison', data)
+  },
   evaluation: {
     report: (jobId) => api.get(`/evaluation/report/${jobId}`),
     reports: () => api.get('/evaluation/reports')

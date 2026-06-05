@@ -9,6 +9,7 @@ const routes = [
   { path: '/patterns', name: 'Patterns', component: () => import('../views/PatternView.vue') },
   { path: '/evaluation', name: 'Evaluation', component: () => import('../views/EvaluationView.vue') },
   { path: '/alerts', name: 'Alerts', component: () => import('../views/AlertView.vue') },
+  { path: '/comparison', name: 'Comparison', component: () => import('../views/ComparisonView.vue') },
 ]
 
 const router = createRouter({
