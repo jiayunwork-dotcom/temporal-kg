@@ -10,7 +10,6 @@ import com.temporalkg.repository.GraphRelationRepository;
 import com.temporalkg.repository.TripleRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.text.similarity.LevenshteinDistance;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -62,50 +61,108 @@ public class GraphService {
 
     @Transactional
     public GraphEntity getOrCreateEntity(String name, String type, Map<String, Object> attributes) {
-        String key = name + "||" + type;
-        GraphEntity cached = entityCache.get(key);
-        if (cached != null) return cached;
+        String effectiveType = (type != null && !type.isBlank()) ? type : "UNKNOWN";
 
-        Optional<GraphEntity> existing = entityRepository.findByNameAndEntityType(name, type);
-        if (existing.isPresent()) {
-            GraphEntity entity = existing.get();
-            if (attributes != null && !attributes.isEmpty()) {
-                Map<String, Object> merged = new HashMap<>(entity.getAttributes());
-                merged.putAll(attributes);
-                entity.setAttributes(merged);
-                entity.setUpdatedAt(OffsetDateTime.now());
-                entityRepository.save(entity);
+        String cacheKeyExact = name + "||" + effectiveType;
+        GraphEntity cachedExact = entityCache.get(cacheKeyExact);
+        if (cachedExact != null) return cachedExact;
+
+        String cacheKeyUnknown = name + "||UNKNOWN";
+        if (!effectiveType.equals("UNKNOWN")) {
+            GraphEntity cachedUnknown = entityCache.get(cacheKeyUnknown);
+            if (cachedUnknown != null && "UNKNOWN".equals(cachedUnknown.getEntityType())) {
+                cachedUnknown.setEntityType(effectiveType);
+                cachedUnknown.setUpdatedAt(OffsetDateTime.now());
+                if (attributes != null && !attributes.isEmpty()) {
+                    Map<String, Object> merged = new HashMap<>(cachedUnknown.getAttributes());
+                    merged.putAll(attributes);
+                    cachedUnknown.setAttributes(merged);
+                }
+                entityRepository.save(cachedUnknown);
+                entityCache.remove(cacheKeyUnknown);
+                entityCache.put(cacheKeyExact, cachedUnknown);
+                return cachedUnknown;
             }
-            entityCache.put(key, entity);
-            return entity;
+        }
+
+        List<GraphEntity> existingList = entityRepository.findAllByName(name);
+        if (!existingList.isEmpty()) {
+            GraphEntity best = existingList.stream()
+                    .filter(e -> !e.getEntityType().equals("UNKNOWN"))
+                    .findFirst()
+                    .orElse(existingList.get(0));
+
+            if ("UNKNOWN".equals(best.getEntityType()) && !"UNKNOWN".equals(effectiveType)) {
+                best.setEntityType(effectiveType);
+                best.setUpdatedAt(OffsetDateTime.now());
+            }
+            if (attributes != null && !attributes.isEmpty()) {
+                Map<String, Object> merged = new HashMap<>(best.getAttributes());
+                merged.putAll(attributes);
+                best.setAttributes(merged);
+                best.setUpdatedAt(OffsetDateTime.now());
+            }
+
+            if (existingList.size() > 1) {
+                for (GraphEntity dup : existingList) {
+                    if (!dup.getId().equals(best.getId())) {
+                        tripleRepository.updateSubjectId(dup.getId(), best.getId());
+                        tripleRepository.updateObjectId(dup.getId(), best.getId());
+                        entityRepository.delete(dup);
+                    }
+                }
+                entityRepository.save(best);
+                entityCache.clear();
+            } else {
+                entityRepository.save(best);
+            }
+
+            String bestKey = best.getName() + "||" + best.getEntityType();
+            entityCache.put(bestKey, best);
+            if (!bestKey.equals(cacheKeyExact)) {
+                entityCache.put(cacheKeyExact, best);
+            }
+            return best;
         }
 
         GraphEntity entity = GraphEntity.builder()
                 .name(name)
-                .entityType(type != null ? type : "UNKNOWN")
+                .entityType(effectiveType)
                 .attributes(attributes != null ? attributes : Map.of())
                 .build();
         entity = entityRepository.save(entity);
-        entityCache.put(key, entity);
+        entityCache.put(cacheKeyExact, entity);
         return entity;
     }
 
     @Transactional
     public GraphRelation getOrCreateRelation(String name, String category) {
+        String effectiveCategory = (category != null && !category.isBlank()) ? category : "OTHER";
+
         String key = name;
         GraphRelation cached = relationCache.get(key);
-        if (cached != null) return cached;
+        if (cached != null) {
+            if ("OTHER".equals(cached.getCategory()) && !"OTHER".equals(effectiveCategory)) {
+                cached.setCategory(effectiveCategory);
+                relationRepository.save(cached);
+            }
+            return cached;
+        }
 
         Optional<GraphRelation> existing = relationRepository.findByName(name);
         if (existing.isPresent()) {
             GraphRelation rel = existing.get();
+            if ("OTHER".equals(rel.getCategory()) && !"OTHER".equals(effectiveCategory)) {
+                rel.setCategory(effectiveCategory);
+                relationRepository.save(rel);
+            }
             relationCache.put(key, rel);
             return rel;
         }
 
         GraphRelation rel = GraphRelation.builder()
                 .name(name)
-                .category(category != null ? category : "OTHER")
+                .category(effectiveCategory)
                 .build();
         rel = relationRepository.save(rel);
         relationCache.put(key, rel);

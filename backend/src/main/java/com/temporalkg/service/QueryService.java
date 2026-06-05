@@ -31,6 +31,9 @@ public class QueryService {
         if (entityName != null && !entityName.isBlank()) {
             List<GraphEntity> entities = entityRepository.fuzzySearchByName(entityName, 100);
             List<Long> entityIds = entities.stream().map(GraphEntity::getId).toList();
+            if (entityIds.isEmpty()) {
+                return List.of();
+            }
             triples = tripleRepository.findByEntityIds(entityIds);
         } else {
             triples = tripleRepository.findAll();

@@ -2,6 +2,7 @@ package com.temporalkg.repository;
 
 import com.temporalkg.entity.Triple;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -58,4 +59,12 @@ public interface TripleRepository extends JpaRepository<Triple, Long> {
 
     @Query("SELECT COUNT(t) FROM Triple t WHERE t.subjectId = :entityId OR t.objectId = :entityId")
     int countDegree(@Param("entityId") Long entityId);
+
+    @Modifying
+    @Query("UPDATE Triple t SET t.subjectId = :newId WHERE t.subjectId = :oldId")
+    void updateSubjectId(@Param("oldId") Long oldId, @Param("newId") Long newId);
+
+    @Modifying
+    @Query("UPDATE Triple t SET t.objectId = :newId WHERE t.objectId = :oldId")
+    void updateObjectId(@Param("oldId") Long oldId, @Param("newId") Long newId);
 }

@@ -16,6 +16,8 @@ public interface GraphEntityRepository extends JpaRepository<GraphEntity, Long> 
 
     Optional<GraphEntity> findByName(String name);
 
+    List<GraphEntity> findAllByName(String name);
+
     List<GraphEntity> findByEntityType(String entityType);
 
     @Query(value = "SELECT * FROM entities WHERE name % :query ORDER BY similarity(name, :query) DESC LIMIT :limit", nativeQuery = true)
