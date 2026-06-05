@@ -1,0 +1,13 @@
+package com.temporalkg;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableAsync;
+
+@SpringBootApplication
+@EnableAsync
+public class TemporalKgApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(TemporalKgApplication.class, args);
+    }
+}

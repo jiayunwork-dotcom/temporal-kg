@@ -1,0 +1,106 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tkg-postgres
+    environment:
+      POSTGRES_DB: temporal_kg
+      POSTGRES_USER: tkg
+      POSTGRES_PASSWORD: tkg_secret_2024
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tkg -d temporal_kg"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tkg-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: tkg-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tkg-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tkg-backend
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/temporal_kg
+      SPRING_DATASOURCE_USERNAME: tkg
+      SPRING_DATASOURCE_PASSWORD: tkg_secret_2024
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      ML_WORKER_QUEUE: tkg:ml:tasks
+      ML_WORKER_RESULT_QUEUE: tkg:ml:results
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tkg-net
+
+  ml-worker:
+    build:
+      context: ./ml-worker
+      dockerfile: Dockerfile
+    container_name: tkg-ml-worker
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: temporal_kg
+      DB_USER: tkg
+      DB_PASSWORD: tkg_secret_2024
+      TASK_QUEUE: tkg:ml:tasks
+      RESULT_QUEUE: tkg:ml:results
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ml-models:/app/models
+    networks:
+      - tkg-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tkg-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - tkg-net
+
+volumes:
+  pgdata:
+  redisdata:
+  ml-models:
+
+networks:
+  tkg-net:
+    driver: bridge
