@@ -40,23 +40,8 @@ public class ComparisonService {
         List<Triple> snapshotT1 = tripleRepository.findSnapshotAtTime(t1);
         List<Triple> snapshotT2 = tripleRepository.findSnapshotAtTime(t2);
 
-        Map<String, Triple> mapT1 = buildKeyMap(snapshotT1);
-        Map<String, Triple> mapT2 = buildKeyMap(snapshotT2);
-
-        Set<String> allKeys = new HashSet<>();
-        allKeys.addAll(mapT1.keySet());
-        allKeys.addAll(mapT2.keySet());
-
-        Map<String, String> entityPairToRelT1 = new HashMap<>();
-        Map<String, String> entityPairToRelT2 = new HashMap<>();
-        for (Map.Entry<String, Triple> e : mapT1.entrySet()) {
-            String pairKey = entityPairKey(e.getValue());
-            entityPairToRelT1.put(pairKey, e.getValue().getRelationId().toString());
-        }
-        for (Map.Entry<String, Triple> e : mapT2.entrySet()) {
-            String pairKey = entityPairKey(e.getValue());
-            entityPairToRelT2.put(pairKey, e.getValue().getRelationId().toString());
-        }
+        Map<String, List<Triple>> pairMapT1 = buildPairMap(snapshotT1);
+        Map<String, List<Triple>> pairMapT2 = buildPairMap(snapshotT2);
 
         List<DiffTripleDTO> addedTriples = new ArrayList<>();
         List<DiffTripleDTO> deletedTriples = new ArrayList<>();
@@ -66,42 +51,113 @@ public class ComparisonService {
         Set<Long> involvedEntityIds = new HashSet<>();
         Map<Long, Integer> entityEventCount = new HashMap<>();
 
-        for (String key : allKeys) {
-            boolean inT1 = mapT1.containsKey(key);
-            boolean inT2 = mapT2.containsKey(key);
+        Set<String> allPairs = new HashSet<>();
+        allPairs.addAll(pairMapT1.keySet());
+        allPairs.addAll(pairMapT2.keySet());
 
-            if (inT2 && !inT1) {
-                Triple t = mapT2.get(key);
-                addedTriples.add(toDiffTriple(t, "ADDED", null));
-                involvedEntityIds.add(t.getSubjectId());
-                involvedEntityIds.add(t.getObjectId());
-                entityEventCount.merge(t.getSubjectId(), 1, Integer::sum);
-                entityEventCount.merge(t.getObjectId(), 1, Integer::sum);
-            } else if (inT1 && !inT2) {
-                Triple t = mapT1.get(key);
-                deletedTriples.add(toDiffTriple(t, "DELETED", null));
-                involvedEntityIds.add(t.getSubjectId());
-                involvedEntityIds.add(t.getObjectId());
-                entityEventCount.merge(t.getSubjectId(), 1, Integer::sum);
-                entityEventCount.merge(t.getObjectId(), 1, Integer::sum);
+        for (String pairKey : allPairs) {
+            List<Triple> t1Triples = pairMapT1.getOrDefault(pairKey, Collections.emptyList());
+            List<Triple> t2Triples = pairMapT2.getOrDefault(pairKey, Collections.emptyList());
+
+            boolean pairInT1 = !t1Triples.isEmpty();
+            boolean pairInT2 = !t2Triples.isEmpty();
+
+            if (pairInT2 && !pairInT1) {
+                for (Triple t : t2Triples) {
+                    addedTriples.add(toDiffTriple(t, "ADDED", null));
+                    involvedEntityIds.add(t.getSubjectId());
+                    involvedEntityIds.add(t.getObjectId());
+                    entityEventCount.merge(t.getSubjectId(), 1, Integer::sum);
+                    entityEventCount.merge(t.getObjectId(), 1, Integer::sum);
+                }
+            } else if (pairInT1 && !pairInT2) {
+                for (Triple t : t1Triples) {
+                    deletedTriples.add(toDiffTriple(t, "DELETED", null));
+                    involvedEntityIds.add(t.getSubjectId());
+                    involvedEntityIds.add(t.getObjectId());
+                    entityEventCount.merge(t.getSubjectId(), 1, Integer::sum);
+                    entityEventCount.merge(t.getObjectId(), 1, Integer::sum);
+                }
             } else {
-                Triple t1Triple = mapT1.get(key);
-                Triple t2Triple = mapT2.get(key);
-                String pairKey = entityPairKey(t1Triple);
-                String relT1 = entityPairToRelT1.get(pairKey);
-                String relT2 = entityPairToRelT2.get(pairKey);
+                Set<Long> t1RelIds = t1Triples.stream().map(Triple::getRelationId).collect(Collectors.toSet());
+                Set<Long> t2RelIds = t2Triples.stream().map(Triple::getRelationId).collect(Collectors.toSet());
 
-                if (relT1 != null && relT2 != null && !relT1.equals(relT2)) {
-                    String oldRelName = getRelationName(t1Triple.getRelationId());
-                    changedTriples.add(toDiffTriple(t2Triple, "CHANGED", oldRelName));
-                    involvedEntityIds.add(t1Triple.getSubjectId());
-                    involvedEntityIds.add(t1Triple.getObjectId());
-                    entityEventCount.merge(t1Triple.getSubjectId(), 1, Integer::sum);
-                    entityEventCount.merge(t1Triple.getObjectId(), 1, Integer::sum);
+                Set<Long> commonRelIds = new HashSet<>(t1RelIds);
+                commonRelIds.retainAll(t2RelIds);
+
+                Set<Long> removedRelIds = new HashSet<>(t1RelIds);
+                removedRelIds.removeAll(t2RelIds);
+
+                Set<Long> addedRelIds = new HashSet<>(t2RelIds);
+                addedRelIds.removeAll(t1RelIds);
+
+                for (Triple t : t1Triples) {
+                    if (commonRelIds.contains(t.getRelationId())) {
+                        persistedTriples.add(toDiffTriple(t, "PERSISTED", null));
+                        involvedEntityIds.add(t.getSubjectId());
+                        involvedEntityIds.add(t.getObjectId());
+                    }
+                }
+
+                boolean hasRelationChange = !removedRelIds.isEmpty() && !addedRelIds.isEmpty();
+
+                if (hasRelationChange) {
+                    List<Triple> removedTriples = t1Triples.stream()
+                            .filter(t -> removedRelIds.contains(t.getRelationId()))
+                            .toList();
+                    List<Triple> addedRelTriples = t2Triples.stream()
+                            .filter(t -> addedRelIds.contains(t.getRelationId()))
+                            .toList();
+
+                    int pairCount = Math.min(removedTriples.size(), addedRelTriples.size());
+
+                    for (int i = 0; i < pairCount; i++) {
+                        Triple oldTriple = removedTriples.get(i);
+                        Triple newTriple = addedRelTriples.get(i);
+                        String oldRelName = getRelationName(oldTriple.getRelationId());
+                        changedTriples.add(toDiffTriple(newTriple, "CHANGED", oldRelName));
+                        involvedEntityIds.add(newTriple.getSubjectId());
+                        involvedEntityIds.add(newTriple.getObjectId());
+                        entityEventCount.merge(newTriple.getSubjectId(), 1, Integer::sum);
+                        entityEventCount.merge(newTriple.getObjectId(), 1, Integer::sum);
+                    }
+
+                    for (int i = pairCount; i < removedTriples.size(); i++) {
+                        Triple oldTriple = removedTriples.get(i);
+                        deletedTriples.add(toDiffTriple(oldTriple, "DELETED", null));
+                        involvedEntityIds.add(oldTriple.getSubjectId());
+                        involvedEntityIds.add(oldTriple.getObjectId());
+                        entityEventCount.merge(oldTriple.getSubjectId(), 1, Integer::sum);
+                        entityEventCount.merge(oldTriple.getObjectId(), 1, Integer::sum);
+                    }
+
+                    for (int i = pairCount; i < addedRelTriples.size(); i++) {
+                        Triple newTriple = addedRelTriples.get(i);
+                        addedTriples.add(toDiffTriple(newTriple, "ADDED", null));
+                        involvedEntityIds.add(newTriple.getSubjectId());
+                        involvedEntityIds.add(newTriple.getObjectId());
+                        entityEventCount.merge(newTriple.getSubjectId(), 1, Integer::sum);
+                        entityEventCount.merge(newTriple.getObjectId(), 1, Integer::sum);
+                    }
                 } else {
-                    persistedTriples.add(toDiffTriple(t1Triple, "PERSISTED", null));
-                    involvedEntityIds.add(t1Triple.getSubjectId());
-                    involvedEntityIds.add(t1Triple.getObjectId());
+                    for (Triple t : t1Triples) {
+                        if (removedRelIds.contains(t.getRelationId())) {
+                            deletedTriples.add(toDiffTriple(t, "DELETED", null));
+                            involvedEntityIds.add(t.getSubjectId());
+                            involvedEntityIds.add(t.getObjectId());
+                            entityEventCount.merge(t.getSubjectId(), 1, Integer::sum);
+                            entityEventCount.merge(t.getObjectId(), 1, Integer::sum);
+                        }
+                    }
+                    for (Triple t : t2Triples) {
+                        if (addedRelIds.contains(t.getRelationId())) {
+                            addedTriples.add(toDiffTriple(t, "ADDED", null));
+                            involvedEntityIds.add(t.getSubjectId());
+                            involvedEntityIds.add(t.getObjectId());
+                            entityEventCount.merge(t.getSubjectId(), 1, Integer::sum);
+                            entityEventCount.merge(t.getObjectId(), 1, Integer::sum);
+                        }
+                    }
                 }
             }
         }
@@ -197,17 +253,13 @@ public class ComparisonService {
                 .build();
     }
 
-    private Map<String, Triple> buildKeyMap(List<Triple> triples) {
-        Map<String, Triple> map = new LinkedHashMap<>();
+    private Map<String, List<Triple>> buildPairMap(List<Triple> triples) {
+        Map<String, List<Triple>> map = new LinkedHashMap<>();
         for (Triple t : triples) {
-            String key = t.getSubjectId() + "-" + t.getRelationId() + "-" + t.getObjectId();
-            map.put(key, t);
+            String key = t.getSubjectId() + "-" + t.getObjectId();
+            map.computeIfAbsent(key, k -> new ArrayList<>()).add(t);
         }
         return map;
-    }
-
-    private String entityPairKey(Triple t) {
-        return t.getSubjectId() + "-" + t.getObjectId();
     }
 
     private DiffTripleDTO toDiffTriple(Triple t, String diffType, String oldRelation) {
@@ -331,10 +383,14 @@ public class ComparisonService {
         List<Long> entityList = new ArrayList<>(allEntities);
         entityList.sort(Long::compareTo);
 
-        int[] rankT1 = computeRanks(entityList, degreeT1);
-        int[] rankT2 = computeRanks(entityList, degreeT2);
+        double[] degreeArrT1 = new double[entityList.size()];
+        double[] degreeArrT2 = new double[entityList.size()];
+        for (int i = 0; i < entityList.size(); i++) {
+            degreeArrT1[i] = degreeT1.getOrDefault(entityList.get(i), 0);
+            degreeArrT2[i] = degreeT2.getOrDefault(entityList.get(i), 0);
+        }
 
-        return kendallTau(rankT1, rankT2);
+        return kendallTauB(degreeArrT1, degreeArrT2);
     }
 
     private Map<Long, Integer> computeDegreeCentrality(List<Triple> snapshot) {
@@ -346,26 +402,8 @@ public class ComparisonService {
         return degree;
     }
 
-    private int[] computeRanks(List<Long> entities, Map<Long, Integer> degreeMap) {
-        int n = entities.size();
-        int[] degrees = new int[n];
-        for (int i = 0; i < n; i++) {
-            degrees[i] = degreeMap.getOrDefault(entities.get(i), 0);
-        }
-
-        Integer[] indices = new Integer[n];
-        for (int i = 0; i < n; i++) indices[i] = i;
-        Arrays.sort(indices, (a, b) -> Integer.compare(degrees[b], degrees[a]));
-
-        int[] ranks = new int[n];
-        for (int i = 0; i < n; i++) {
-            ranks[indices[i]] = i + 1;
-        }
-        return ranks;
-    }
-
-    private double kendallTau(int[] rank1, int[] rank2) {
-        int n = rank1.length;
+    private double kendallTauB(double[] x, double[] y) {
+        int n = x.length;
         if (n < 2) return 0.0;
 
         long concordant = 0;
@@ -373,31 +411,51 @@ public class ComparisonService {
 
         for (int i = 0; i < n; i++) {
             for (int j = i + 1; j < n; j++) {
-                long diff1 = rank1[i] - rank1[j];
-                long diff2 = rank2[i] - rank2[j];
-                long product = diff1 * diff2;
+                double diffX = x[i] - x[j];
+                double diffY = y[i] - y[j];
+                double product = diffX * diffY;
                 if (product > 0) concordant++;
                 else if (product < 0) discordant++;
             }
         }
 
-        long total = concordant + discordant;
-        if (total == 0) return 0.0;
+        long n0 = (long) n * (n - 1) / 2;
 
-        return (double) (concordant - discordant) / total;
+        Map<Double, Long> tiesX = new HashMap<>();
+        Map<Double, Long> tiesY = new HashMap<>();
+        for (int i = 0; i < n; i++) {
+            tiesX.merge(x[i], 1L, Long::sum);
+            tiesY.merge(y[i], 1L, Long::sum);
+        }
+
+        long n1 = 0;
+        for (long t : tiesX.values()) {
+            if (t > 1) n1 += t * (t - 1) / 2;
+        }
+
+        long n2 = 0;
+        for (long t : tiesY.values()) {
+            if (t > 1) n2 += t * (t - 1) / 2;
+        }
+
+        double denomX = n0 - n1;
+        double denomY = n0 - n2;
+
+        if (denomX <= 0 || denomY <= 0) return 0.0;
+
+        return (concordant - discordant) / Math.sqrt(denomX * denomY);
     }
 
     private double computeCommunityStability(List<Triple> snapshotT1, List<Triple> snapshotT2) {
         Map<Long, Integer> labelsT1 = computeConnectedComponents(snapshotT1);
         Map<Long, Integer> labelsT2 = computeConnectedComponents(snapshotT2);
 
-        Set<Long> allEntities = new HashSet<>();
-        allEntities.addAll(labelsT1.keySet());
-        allEntities.addAll(labelsT2.keySet());
+        Set<Long> commonEntities = new HashSet<>(labelsT1.keySet());
+        commonEntities.retainAll(labelsT2.keySet());
 
-        if (allEntities.isEmpty()) return 1.0;
+        if (commonEntities.isEmpty()) return 0.0;
 
-        return computeNMI(labelsT1, labelsT2, allEntities);
+        return computeNMI(labelsT1, labelsT2, commonEntities);
     }
 
     private Map<Long, Integer> computeConnectedComponents(List<Triple> snapshot) {
@@ -441,15 +499,15 @@ public class ComparisonService {
         }
     }
 
-    private double computeNMI(Map<Long, Integer> labelsT1, Map<Long, Integer> labelsT2, Set<Long> allEntities) {
-        int n = allEntities.size();
-        if (n == 0) return 1.0;
+    private double computeNMI(Map<Long, Integer> labelsT1, Map<Long, Integer> labelsT2, Set<Long> commonEntities) {
+        int n = commonEntities.size();
+        if (n == 0) return 0.0;
 
         Map<Integer, Integer> countU = new HashMap<>();
         Map<Integer, Integer> countV = new HashMap<>();
         Map<String, Integer> countUV = new HashMap<>();
 
-        for (Long eid : allEntities) {
+        for (Long eid : commonEntities) {
             int u = labelsT1.getOrDefault(eid, -1);
             int v = labelsT2.getOrDefault(eid, -1);
             countU.merge(u, 1, Integer::sum);
