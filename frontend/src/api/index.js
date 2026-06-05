@@ -39,6 +39,7 @@ export default {
     timeSlice: (params) => api.get('/graph/time-slice', { params }),
     timeline: (params) => api.get('/graph/timeline', { params }),
     full: (params) => api.get('/graph/full', { params }),
+    entityDetail: (params) => api.get('/graph/entity-detail', { params }),
     patternMatch: (pattern) => api.post('/graph/pattern-match', pattern)
   },
   ml: {

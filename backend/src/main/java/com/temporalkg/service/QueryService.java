@@ -305,6 +305,72 @@ public class QueryService {
         return new PathDTO(nodes, edges, pathTriples.size(), Map.of());
     }
 
+    public EntityDetailDTO getEntityDetail(Long entityId) {
+        Optional<GraphEntity> optEntity = entityRepository.findById(entityId);
+        if (optEntity.isEmpty()) return null;
+
+        GraphEntity entity = optEntity.get();
+        int degree = tripleRepository.countDegree(entityId);
+        List<Triple> timeline = tripleRepository.findEntityTimeline(entityId);
+
+        String earliestTime = null;
+        String latestTime = null;
+        for (Triple t : timeline) {
+            String timeStr = extractTimeString(t);
+            if (timeStr == null) continue;
+            if (earliestTime == null || timeStr.compareTo(earliestTime) < 0) earliestTime = timeStr;
+            if (latestTime == null || timeStr.compareTo(latestTime) > 0) latestTime = timeStr;
+        }
+
+        List<Triple> sortedTimeline = new ArrayList<>(timeline);
+        sortedTimeline.sort((a, b) -> {
+            String ta = extractTimeString(a);
+            String tb = extractTimeString(b);
+            if (ta == null && tb == null) return 0;
+            if (ta == null) return 1;
+            if (tb == null) return -1;
+            return tb.compareTo(ta);
+        });
+
+        List<EntityDetailDTO.EventItem> recentEvents = sortedTimeline.stream()
+                .limit(5)
+                .map(t -> {
+                    GraphRelation rel = relationRepository.findById(t.getRelationId()).orElse(null);
+                    String relationName = rel != null ? rel.getName() : "";
+                    String otherEntityName;
+                    if (t.getSubjectId().equals(entityId)) {
+                        GraphEntity obj = entityRepository.findById(t.getObjectId()).orElse(null);
+                        otherEntityName = obj != null ? obj.getName() : "";
+                    } else {
+                        GraphEntity subj = entityRepository.findById(t.getSubjectId()).orElse(null);
+                        otherEntityName = subj != null ? subj.getName() : "";
+                    }
+                    return EntityDetailDTO.EventItem.builder()
+                            .relation(relationName)
+                            .otherEntityName(otherEntityName)
+                            .time(extractTimeString(t))
+                            .build();
+                })
+                .toList();
+
+        return EntityDetailDTO.builder()
+                .id(entityId)
+                .name(entity.getName())
+                .type(entity.getEntityType())
+                .attributes(entity.getAttributes())
+                .tripleCount(degree)
+                .earliestEventTime(earliestTime)
+                .latestEventTime(latestTime)
+                .recentEvents(recentEvents)
+                .build();
+    }
+
+    private String extractTimeString(Triple t) {
+        if (t.getTimePoint() != null) return t.getTimePoint().toString();
+        if (t.getTimeStart() != null) return t.getTimeStart().toString();
+        return null;
+    }
+
     private GraphEdgeDTO toEdgeDTO(Triple t) {
         GraphRelation rel = relationRepository.findById(t.getRelationId()).orElse(null);
         return GraphEdgeDTO.builder()

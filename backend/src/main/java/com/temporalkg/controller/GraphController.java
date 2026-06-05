@@ -60,4 +60,11 @@ public class GraphController {
             @RequestParam(defaultValue = "500") int limit) {
         return ResponseEntity.ok(queryService.getFullGraph(limit));
     }
+
+    @GetMapping("/entity-detail")
+    public ResponseEntity<EntityDetailDTO> getEntityDetail(@RequestParam Long entityId) {
+        EntityDetailDTO detail = queryService.getEntityDetail(entityId);
+        if (detail == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(detail);
+    }
 }
